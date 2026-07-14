@@ -75,5 +75,74 @@ tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises PASSED [1
 5 passed in 1.25s
 ```
 
+## Commit History
+
+`git log --oneline` on `feature/watchlist` after rebasing and rewriting history (rewritten commits above `bbe206c`, which is upstream `main`'s own merge commit, not something this branch introduced):
+
+```
+49c36c4 docs: document rebase conflict resolution in pr-response.md
+b35c866 fix: change watchlist sort order to date-added, newest first
+d247bbc fix: default watchlist visibility to private (public=False)
+c416167 fix: update film IDs to UUID format after main refactor
+17cb6fd test: add test for nonexistent film_id in add_to_watchlist
+38d0329 fix: add deduplication check to prevent duplicate watchlist entries
+9b133bb fix: rename save_to_watchlist to add_to_watchlist per naming convention
+c1699fd chore: add .gitignore for venv, caches, and database files
+38b4fc5 fix: update film retrieval method to use db.session.get in collection and watchlist services
+cfef59f feat: add watchlist service and endpoints
+bbe206c Merge pull request #2 from ascherj/chore/add-gitignore    <- upstream main, not ours
+718a9a8 chore: add .gitignore for generated files                <- upstream main, not ours
+07ca580 refactor: migrate film IDs from integer to UUID           <- upstream main, not ours
+014ae54 feat: initial CineLog API with film collection feature   <- shared root commit
+```
+
+10 commits on `feature/watchlist` relative to `origin/main`, each a single logical change, all in `feat:`/`fix:`/`test:`/`chore:`/`docs:` conventional format, no merge commits.
+
 ## PR Description
 <!-- Written at the end — feature overview, design decisions, manual testing steps -->
+
+### What this PR does
+
+Adds a watchlist feature to CineLog: users can save films they want to watch later, view their list, and (implicitly, via the existing model) mark a saved film as public or private. This PR addresses all six review comments from `@dev-lead`:
+
+- Renamed `save_to_watchlist()` → `add_to_watchlist()` to match the codebase's `verb_to_noun` convention.
+- Added deduplication so re-adding a film already on a user's watchlist returns a clean `409` instead of silently creating a duplicate row.
+- Added a test for the nonexistent-`film_id` case, modeled on the equivalent collection test.
+- Rebased onto `main`'s int→UUID film ID refactor and updated the watchlist model/service accordingly.
+
+### Design decisions
+
+- **Default visibility:** watchlists default to **private** (`public=False`). No feature in CineLog currently reads or exposes the `public` flag to other users, so a public-by-default list would expose personal viewing intentions with no corresponding product benefit. Users can opt in once/if a social discovery feature exists. (Full reasoning: Comment 4 above.)
+- **Sort order:** watchlists are sorted by **date added, newest first** — matching the existing convention used by `get_collection()` — rather than alphabetically. This aligns with how users treat a watchlist (a to-watch queue where recent additions are most relevant) and keeps CineLog's two list views internally consistent. (Full reasoning: Comment 5 above.)
+
+### How to manually test
+
+```bash
+python -m venv .venv && source .venv/Scripts/activate  # or .venv\Scripts\activate.bat on Windows cmd
+pip install -r requirements.txt
+python app.py
+```
+
+With the app running (default `http://127.0.0.1:5000`), using a `user_id` and `film_id` that already exist in the database (create via the `/collection` or DB directly if needed):
+
+1. **Add a film to the watchlist:**
+   ```bash
+   curl -X POST http://127.0.0.1:5000/watchlist/<user_id>/add \
+     -H "Content-Type: application/json" \
+     -d '{"film_id": "<film_id>"}'
+   ```
+   Expect `201` with the new entry, `"public": false` by default.
+2. **View the watchlist:**
+   ```bash
+   curl http://127.0.0.1:5000/watchlist/<user_id>
+   ```
+   Expect a JSON array of films, most-recently-added first.
+3. **Try adding the same film again:**
+   Repeat step 1 with the same `user_id`/`film_id`. Expect `409` with an "already on this user's watchlist" error, not a duplicate entry.
+4. **Try a nonexistent film:**
+   Repeat step 1 with a `film_id` that doesn't exist (e.g. `"00000000-0000-0000-0000-000000000000"`). Expect `404` with a "no film found" error.
+5. **Run the automated test suite:**
+   ```bash
+   pytest tests/ -v
+   ```
+   All 5 tests should pass, including `tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises`.
