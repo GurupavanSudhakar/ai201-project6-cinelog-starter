@@ -7,3 +7,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+
+# My setup
+.claude
+CLAUDE.md
+p6_docs/
