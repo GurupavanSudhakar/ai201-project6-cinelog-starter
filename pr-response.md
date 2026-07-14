@@ -81,11 +81,23 @@ tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises PASSED [1
 5 passed in 1.25s
 ```
 
+## Stretch Features
+
+**`remove_from_watchlist()`:** Added `remove_from_watchlist(user_id, film_id)` in `services/watchlist_service.py`, mirroring `remove_from_collection()`'s pattern exactly: look up the `WatchlistEntry` by `filter_by(user_id=, film_id=)`, raise a new `NotInWatchlistError` if it doesn't exist, otherwise delete and commit, returning `True`. Added the matching `DELETE /watchlist/<user_id>/remove` route in `routes/watchlist/watchlist.py`, mirroring `routes/collection.py::remove_film` (400 if `film_id` missing from body, 404 via `NotInWatchlistError`, 200 with a confirmation message on success). Two tests cover it: `test_remove_from_watchlist_removes_entry` (happy path — entry is actually gone from the DB after removal) and `test_remove_from_watchlist_not_in_watchlist_raises` (removing a film never added raises `NotInWatchlistError`). Commit: `feat: add remove_from_watchlist service function and DELETE endpoint`.
+
+**Second test:** Added `test_add_to_watchlist_duplicate_raises`, modeled on `test_add_to_collection_duplicate_raises` in `test_collection.py`. I chose this edge case (rather than e.g. an empty-watchlist case) because it's the one edge case that directly exercises the dedup logic added for Comment 2 — Comment 3 only required a nonexistent-`film_id` test, so the dedup path (`AlreadyInWatchlistError`, and the assertion that only one row ends up in the DB) had zero test coverage until this. Commit: `test: add test for duplicate watchlist entries`.
+
+**Visibility toggle:** `add_to_watchlist(user_id, film_id, public=None)` now accepts an optional `public` argument; when provided, it's passed to the `WatchlistEntry` constructor explicitly, overriding the model's private-by-default. When omitted (`None`), the column default (`False`) applies exactly as before — this is backward compatible with every existing call site. `POST /watchlist/<user_id>/add` now accepts an optional `"public"` key in the request body and forwards it via `data.get("public")` (which is `None` if absent, preserving the default). Verified manually: adding with `{"film_id": ..., "public": true}` returns `"public": true` in the response, confirming the override works. Commit: `feat: add public visibility toggle to add_to_watchlist endpoint`.
+
 ## Commit History
 
 `git log --oneline` on `feature/watchlist` after rebasing and rewriting history (rewritten commits above `bbe206c`, which is upstream `main`'s own merge commit, not something this branch introduced):
 
 ```
+fa95f50 feat: add public visibility toggle to add_to_watchlist endpoint
+76822fb test: add test for duplicate watchlist entries
+251d3d1 feat: add remove_from_watchlist service function and DELETE endpoint
+08efb9a docs: finalize PR description, commit log, and AI usage section
 d7693bf fix: add missing Film.watchlist_entries relationship for get_watchlist
 49c36c4 docs: document rebase conflict resolution in pr-response.md
 b35c866 fix: change watchlist sort order to date-added, newest first
@@ -103,19 +115,22 @@ bbe206c Merge pull request #2 from ascherj/chore/add-gitignore    <- upstream ma
 014ae54 feat: initial CineLog API with film collection feature   <- shared root commit
 ```
 
-11 commits on `feature/watchlist` relative to `origin/main`, each a single logical change, all in `feat:`/`fix:`/`test:`/`chore:`/`docs:` conventional format, no merge commits. (The last commit, `d7693bf`, fixes a pre-existing bug found while manually verifying the testing steps below — see the note after the manual test output.)
+14 commits on `feature/watchlist` relative to `origin/main`, each a single logical change, all in `feat:`/`fix:`/`test:`/`chore:`/`docs:` conventional format, no merge commits.
 
 ## PR Description
 <!-- Written at the end — feature overview, design decisions, manual testing steps -->
 
 ### What this PR does
 
-Adds a watchlist feature to CineLog: users can save films they want to watch later, view their list, and (implicitly, via the existing model) mark a saved film as public or private. This PR addresses all six review comments from `@dev-lead`:
+Adds a watchlist feature to CineLog: users can save films they want to watch later, view their list (newest-added first), remove a film from it, and control whether an entry is public or private. This PR addresses all six review comments from `@dev-lead`, plus three stretch features:
 
 - Renamed `save_to_watchlist()` → `add_to_watchlist()` to match the codebase's `verb_to_noun` convention.
 - Added deduplication so re-adding a film already on a user's watchlist returns a clean `409` instead of silently creating a duplicate row.
 - Added a test for the nonexistent-`film_id` case, modeled on the equivalent collection test.
 - Rebased onto `main`'s int→UUID film ID refactor and updated the watchlist model/service accordingly.
+- **(Stretch)** Added `remove_from_watchlist()` and a `DELETE /watchlist/<user_id>/remove` endpoint.
+- **(Stretch)** Added a test covering the deduplication path (`AlreadyInWatchlistError`).
+- **(Stretch)** Added an optional `public` parameter to `POST /watchlist/<user_id>/add` so callers can explicitly set visibility instead of relying on the default.
 
 ### Design decisions
 
@@ -148,10 +163,25 @@ With the app running (default `http://127.0.0.1:5000`), using a `user_id` and `f
    Repeat step 1 with the same `user_id`/`film_id`. Expect `409` with an "already on this user's watchlist" error, not a duplicate entry.
 4. **Try a nonexistent film:**
    Repeat step 1 with a `film_id` that doesn't exist (e.g. `"00000000-0000-0000-0000-000000000000"`). Expect `404` with a "no film found" error.
-5. **Run the automated test suite:**
+5. **Remove the film from the watchlist:**
+   ```bash
+   curl -X DELETE http://127.0.0.1:5000/watchlist/<user_id>/remove \
+     -H "Content-Type: application/json" \
+     -d '{"film_id": "<film_id>"}'
+   ```
+   Expect `200` with a "Removed from watchlist" message. Repeating this call again should now return `404` (film no longer on the watchlist).
+6. **Add a film with explicit visibility:**
+   ```bash
+   curl -X POST http://127.0.0.1:5000/watchlist/<user_id>/add \
+     -H "Content-Type: application/json" \
+     -d '{"film_id": "<film_id>", "public": true}'
+   ```
+   Expect `201` with `"public": true` in the response, overriding the private default.
+7. **Run the automated test suite:**
    ```bash
    pytest tests/ -v
    ```
+   All 8 tests should pass.
 
 ### Verified output (steps 1–4, via Flask's test client against a seeded user/film)
 
@@ -170,5 +200,17 @@ With the app running (default `http://127.0.0.1:5000`), using a `user_id` and `f
 ```
 
 **Note:** Step 2 initially 500'd with `AttributeError: 'WatchlistEntry' object has no attribute 'film'` — `Film` defined a `collection_entries` relationship with `backref="film"` for `CollectionEntry`, but no equivalent relationship existed for `WatchlistEntry`, even though `get_watchlist()` calls `entry.film.to_dict()`. This bug predates this PR's changes and wasn't caught by the test suite (no test exercises `get_watchlist()`). Fixed by adding `watchlist_entries = db.relationship("WatchlistEntry", backref="film", lazy=True)` to `Film` in `models.py` (commit `d7693bf`). Output above is from after that fix.
+
+### Verified output (steps 5–6, stretch features)
+
+```
+=== 5. Add then remove ===
+add: 201 {'date_added': '...', 'film_id': 'e139adb4-...', 'id': '3bec5ed6-...', 'public': False, 'user_id': '7f270533-...'}
+remove: 200 {'message': 'Removed from watchlist'}
+remove again (expect 404): 404 {'error': "Film 'e139adb4-...' is not on this user's watchlist"}
+
+=== 6. Add with explicit public=True ===
+201 {'date_added': '...', 'film_id': 'e139adb4-...', 'id': 'cc49637d-...', 'public': True, 'user_id': '7f270533-...'}
+```
    ```
    All 5 tests should pass, including `tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises`.
