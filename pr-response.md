@@ -51,9 +51,11 @@ tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises PASSED [1
 **Tradeoff acknowledged:** The obvious cost is that if CineLog's roadmap for watchlists actually is "quiet social discovery" (the way the app's collections feature already frames it as a "community film tracking app"), then a private default adds friction: the eventual feature would need users to go flip a toggle before it'd have any content to show, so we'd launch that hypothetical feature into an empty, opt-in-only surface instead of one that's populated by default. I'm accepting that friction because it only matters once such a feature exists — nothing in this codebase suggests one is imminent — and I'd rather ship a conservative default now than retroactively narrow an already-public default once real user data exists (that's the harder migration).
 
 ## Comment 5 — Sort order
-**My position:**
-**Reasoning:**
-**Engagement with reviewer's point:**
+**My position:** I agree — switching `get_watchlist()` from alphabetical (`Film.title.asc()`) to date-added, newest first (`WatchlistEntry.date_added.desc()`).
+
+**Reasoning:** Beyond the reviewer's general point about recency, there's a concrete consistency argument specific to this codebase: `get_collection()` in `services/collection_service.py` already sorts its list newest-first by `date_added`. A user who logs a watched film and then checks their watchlist would see one list ordered by recency and the other ordered alphabetically, for no functional reason — that's an inconsistency a user would have to learn and remember, not something that helps them. Matching the existing collection convention removes that inconsistency and gives CineLog one predictable "how are my lists ordered" answer instead of two.
+
+**Engagement with reviewer's point:** The reviewer's framing — "most users want to see what they added recently" — describes the watchlist specifically as a queue: you add a film meaning to get to it, and the ones you added most recently are the most likely to still be top-of-mind (a film you added six months ago and forgot about is lower-value at the top than something you added yesterday and are actively planning to watch). Alphabetical sort actively works against that use case — it puts "Alien" above whatever you added an hour ago, permanently, regardless of when it was added. I don't have a case for alphabetical that beats that, and the collection-consistency point above only reinforces it, so I'm implementing the reviewer's suggestion rather than proposing an alternative.
 
 ## Comment 6 — Rebase
 **What conflicted:**
