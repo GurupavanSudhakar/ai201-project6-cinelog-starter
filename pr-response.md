@@ -58,9 +58,22 @@ tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises PASSED [1
 **Engagement with reviewer's point:** The reviewer's framing — "most users want to see what they added recently" — describes the watchlist specifically as a queue: you add a film meaning to get to it, and the ones you added most recently are the most likely to still be top-of-mind (a film you added six months ago and forgot about is lower-value at the top than something you added yesterday and are actively planning to watch). Alphabetical sort actively works against that use case — it puts "Alien" above whatever you added an hour ago, permanently, regardless of when it was added. I don't have a case for alphabetical that beats that, and the collection-consistency point above only reinforces it, so I'm implementing the reviewer's suggestion rather than proposing an alternative.
 
 ## Comment 6 — Rebase
-**What conflicted:**
-**How I resolved it:**
-**How I verified no conflict remains:**
+**What conflicted:** Ran `git fetch origin && git rebase origin/main`. Two conflicts came up:
+1. **`.gitignore`** (add/add): both `main` (via a separate PR, `chore: add .gitignore for generated files`) and my branch added a `.gitignore` independently, with the same 9 base lines plus my own extra entries (`.claude`, `CLAUDE.md`, `p6_docs/`).
+2. **`models.py`** (modify/delete): `main`'s `refactor: migrate film IDs from integer to UUID` commit changed `Film.id` and `CollectionEntry.film_id` from `Integer` to `String(36)` — and, because `main`'s history never had the watchlist feature, that same commit's baseline simply didn't contain a `WatchlistEntry` class at all. My later commit changing `WatchlistEntry.public`'s default (`public=True` → `public=False`) touched a line inside that now-missing class, so git flagged it as a conflict rather than silently reintroducing stale integer-based code.
+
+**How I resolved it:** For `.gitignore`, kept the shared base lines plus my extra entries (both sides' content, no information lost). For `models.py`, restored the `WatchlistEntry` class and updated `film_id` from `db.Column(db.Integer, db.ForeignKey("film.id"))` to `db.Column(db.String(36), db.ForeignKey("film.id"))` to match the post-refactor `Film.id` type, keeping `public=False` from my Comment 4 decision. I also fixed a stale docstring in `services/watchlist_service.py::add_to_watchlist` that still described `film_id` as `(int)` — updated to `(str): UUID of the film.` to match the rebased model.
+
+**How I verified no conflict remains:** `git rebase --continue` completed with "Successfully rebased and updated refs/heads/feature/watchlist." `git log --oneline --merges origin/main..HEAD` returns nothing — no merge commits were introduced by the rebase. Ran the full test suite after resolving each conflict and again after the rebase finished:
+```
+$ python -m pytest tests/ -v
+tests/test_collection.py::test_add_to_collection_creates_entry PASSED    [ 20%]
+tests/test_collection.py::test_add_to_collection_duplicate_raises PASSED [ 40%]
+tests/test_collection.py::test_add_to_collection_nonexistent_film_raises PASSED [ 60%]
+tests/test_collection.py::test_get_collection_returns_newest_first PASSED [ 80%]
+tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises PASSED [100%]
+5 passed in 1.25s
+```
 
 ## PR Description
 <!-- Written at the end — feature overview, design decisions, manual testing steps -->
