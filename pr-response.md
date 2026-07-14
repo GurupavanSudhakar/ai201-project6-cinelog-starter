@@ -212,5 +212,3 @@ remove again (expect 404): 404 {'error': "Film 'e139adb4-...' is not on this use
 === 6. Add with explicit public=True ===
 201 {'date_added': '...', 'film_id': 'e139adb4-...', 'id': 'cc49637d-...', 'public': True, 'user_id': '7f270533-...'}
 ```
-   ```
-   All 5 tests should pass, including `tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises`.
