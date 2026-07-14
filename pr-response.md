@@ -2,6 +2,12 @@
 
 ## AI Usage
 <!-- Fill in at the end — how you used AI tools during this project -->
+This entire project was completed with Claude Code (an AI coding assistant), used end-to-end rather than for one isolated step, so I'm documenting the specific ways it was used rather than claiming a human-only baseline:
+
+- **Codebase orientation:** before touching any review comment, read `models.py`, `services/collection_service.py`, `services/watchlist_service.py`, `routes/collection.py`, `routes/watchlist/watchlist.py`, and `tests/test_collection.py` in full, and used a research subagent to summarize each file's responsibilities, function signatures, and the exact deduplication/error-handling pattern in `add_to_collection()` before writing the watchlist equivalent (Comments 1–3).
+- **Locating the review comments:** the six comments live on PR #1 of the upstream teaching repo, not this fork. Used the GitHub REST API directly (`api.github.com/.../pulls/1/comments` and `.../issues/1/comments`) to pull the verbatim comment text and inline diff locations, rather than trusting a paraphrase.
+- **Grounding, not generating, the design decisions (Comments 4 and 5):** rather than asking AI to write the visibility/sort-order arguments generically, I first verified concrete facts about this specific codebase — grepped for any follow/friend/social-browsing feature that reads `WatchlistEntry.public` (found none, which is the actual basis for the private-by-default argument) and confirmed `get_collection()`'s existing `date_added.desc()` sort order (the actual basis for the sort-order consistency argument) — then wrote the position and reasoning from those verified facts. I did not have AI produce a draft argument and then lightly edit it; a separate "stress-test" AI pass on my own AI-authored draft wouldn't add independent signal, so the check here was grounding every claim in something I could grep or read, not a second model opinion.
+- **Manual verification, found a real bug:** used Flask's test client to actually exercise the four watchlist scenarios described in the PR description's testing steps (rather than describing them without running them), which surfaced a genuine pre-existing bug — `get_watchlist()` crashed with a 500 because `Film` had no relationship backref for `WatchlistEntry`. Fixed and re-verified (see Commit History / PR Description sections above).
 
 ## Comment 1 — Rename
 **What I did:** Renamed `save_to_watchlist()` to `add_to_watchlist()` in `services/watchlist_service.py` to match the project's `verb_to_noun` naming convention used by `add_to_collection()`. Updated the single call site in `routes/watchlist/watchlist.py` (`add_film` view). I searched the codebase with `grep -r "save_to_watchlist"` before and after the change — it initially found exactly two matches (the definition and the one call site) and zero matches after the rename, confirming no stragglers were left.
@@ -80,6 +86,7 @@ tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises PASSED [1
 `git log --oneline` on `feature/watchlist` after rebasing and rewriting history (rewritten commits above `bbe206c`, which is upstream `main`'s own merge commit, not something this branch introduced):
 
 ```
+d7693bf fix: add missing Film.watchlist_entries relationship for get_watchlist
 49c36c4 docs: document rebase conflict resolution in pr-response.md
 b35c866 fix: change watchlist sort order to date-added, newest first
 d247bbc fix: default watchlist visibility to private (public=False)
@@ -96,7 +103,7 @@ bbe206c Merge pull request #2 from ascherj/chore/add-gitignore    <- upstream ma
 014ae54 feat: initial CineLog API with film collection feature   <- shared root commit
 ```
 
-10 commits on `feature/watchlist` relative to `origin/main`, each a single logical change, all in `feat:`/`fix:`/`test:`/`chore:`/`docs:` conventional format, no merge commits.
+11 commits on `feature/watchlist` relative to `origin/main`, each a single logical change, all in `feat:`/`fix:`/`test:`/`chore:`/`docs:` conventional format, no merge commits. (The last commit, `d7693bf`, fixes a pre-existing bug found while manually verifying the testing steps below — see the note after the manual test output.)
 
 ## PR Description
 <!-- Written at the end — feature overview, design decisions, manual testing steps -->
@@ -144,5 +151,24 @@ With the app running (default `http://127.0.0.1:5000`), using a `user_id` and `f
 5. **Run the automated test suite:**
    ```bash
    pytest tests/ -v
+   ```
+
+### Verified output (steps 1–4, via Flask's test client against a seeded user/film)
+
+```
+=== 1. Add film to watchlist ===
+201 {'date_added': '2026-07-14T22:39:54.759538', 'film_id': 'f04a2ddb-...', 'id': 'bba496f5-...', 'public': False, 'user_id': '7e5bdc68-...'}
+
+=== 2. View watchlist ===
+200 [{'average_rating': 0.0, 'date_added': '2026-07-14T22:39:54.759538', 'director': None, 'genre': 'Comedy', 'id': 'f04a2ddb-...', 'poster_url': None, 'public': False, 'title': 'Paddington 2', 'year': 2017}]
+
+=== 3. Add same film again (expect 409) ===
+409 {'error': "Film 'f04a2ddb-...' is already on this user's watchlist"}
+
+=== 4. Add nonexistent film (expect 404) ===
+404 {'error': "No film found with id '00000000-0000-0000-0000-000000000000'"}
+```
+
+**Note:** Step 2 initially 500'd with `AttributeError: 'WatchlistEntry' object has no attribute 'film'` — `Film` defined a `collection_entries` relationship with `backref="film"` for `CollectionEntry`, but no equivalent relationship existed for `WatchlistEntry`, even though `get_watchlist()` calls `entry.film.to_dict()`. This bug predates this PR's changes and wasn't caught by the test suite (no test exercises `get_watchlist()`). Fixed by adding `watchlist_entries = db.relationship("WatchlistEntry", backref="film", lazy=True)` to `Film` in `models.py` (commit `d7693bf`). Output above is from after that fix.
    ```
    All 5 tests should pass, including `tests/test_watchlist.py::test_add_to_watchlist_nonexistent_film_raises`.
